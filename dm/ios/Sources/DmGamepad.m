@@ -164,6 +164,7 @@ static void pads_start(void);   // Physical controllers, below
     BOOL _padOff;                                  // a physical controller is connected: every touch goes to the game
     DmLayout _layout;
     UITouch *_game[16];                            // touches on the game's touch screen by finger slot
+    UITouch *_gearRevealTap; CGPoint _gearRevealStart; NSTimeInterval _gearRevealBegan; NSUInteger _gearEpoch;
 }
 
 static UIColor *k_idle, *k_on, *k_line, *k_ringFill, *k_text, *k_textOn;
@@ -213,10 +214,12 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
         _menu.backgroundColor = k_idle; _menu.layer.borderColor = k_line.CGColor; _menu.layer.borderWidth = 1.5;
         _menu.layer.shadowColor = UIColor.blackColor.CGColor; _menu.layer.shadowOpacity = 0.2; _menu.layer.shadowRadius = 3; _menu.layer.shadowOffset = CGSizeMake(0, 1);
         _menu.tintColor = k_text; _menu.accessibilityLabel = @"设置菜单";
+        _menu.hidden = YES;
         __weak DmGamepad *weakSelf = self;
         [_menu addAction:[UIAction actionWithHandler:^(UIAction *a) {
             (void)a;
             [weakSelf reset];
+            if (weakSelf) weakSelf->_menu.hidden = YES;
             dm_game_menu_toggle();
         }] forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_menu];
@@ -323,7 +326,14 @@ static BOOL isClick(int b) { return b == B_LS || b == B_RS; }
 - (CGRect)pillRect:(int)b { CGRect s = self.safe; CGFloat u = self.u, w = K_PILL_W * u, h = K_PILL_H * u;
     CGPoint c = CGPointMake(CGRectGetMidX(s) + (b == B_PLUS ? K_PILL_DX : -K_PILL_DX) * u, CGRectGetMinY(s) + MAX(K_PILL_Y * u, _layout.separated ? 14 : 0));   // − on the left, + on the right
     return CGRectMake(c.x - w / 2, c.y - h / 2, w, h); }
-- (CGPoint)menuCenter { CGRect s = self.safe; return CGPointMake(CGRectGetMidX(s), CGRectGetMinY(s) + MAX(K_PILL_Y * self.u, _layout.separated ? 14 : 0)); }
+- (CGPoint)menuCenter {
+    CGRect s = self.safe;
+    CGFloat r = K_MENU_R * self.u;
+    CGFloat topBar = MAX(0, CGRectGetMinY(_layout.game));
+    CGFloat x = CGRectGetMinX(s) + r + 8 * self.u;
+    CGFloat y = topBar >= 2 * r + 12 ? topBar / 2 : CGRectGetMinY(s) + r + 8 * self.u;
+    return CGPointMake(x, y);   // Upper-left, inside top letterbox when present
+}
 
 static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); }
 - (CGFloat)buttonDistance:(int)b point:(CGPoint)p {
@@ -348,11 +358,31 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     return best;
 }
 - (CGFloat)menuDistance:(CGPoint)p { return dist(p, self.menuCenter) / MAX(K_MENU_R * self.u * 1.6, 22); }
-- (BOOL)menuTakes:(CGPoint)p {   // the menu button takes a touch in its hit circle unless a locked key's target is nearer (the drawn keys are hidden in Tap and with a controller)
+- (BOOL)menuTakes:(CGPoint)p {   // hidden gear never takes touches until revealed
+    if (_menu.hidden) return NO;
+    CGFloat top = CGRectGetMinY(_layout.game);
+    if (top >= 36 && p.y < top - 2 && [self menuDistance:p] <= 1) return YES;
     CGFloat d = [self menuDistance:p]; if (d > 1) return NO;
     if (_tap || _padOff || (_layout.separated && !CGRectContainsPoint(_layout.controls, p))) return YES;
     int hit = [self btnAt:p];
     return hit < 0 || d < [self buttonDistance:hit point:p];
+}
+- (BOOL)acceptsGearRevealTap:(CGPoint)p {
+    CGFloat top = CGRectGetMinY(_layout.game);
+    BOOL inTopBar = (top >= 36 && p.y >= 0 && p.y < top - 2);
+    CGRect s = self.safe;
+    BOOL inUpperLeft = (p.x >= CGRectGetMinX(s) && p.x < CGRectGetMinX(s) + 88 && p.y >= CGRectGetMinY(s) && p.y < CGRectGetMinY(s) + 88);
+    if (!inTopBar && !inUpperLeft) return NO;
+    return _padOff || _tap || [self btnAt:p] < 0;
+}
+- (void)revealGear {
+    _menu.hidden = NO;
+    NSUInteger epoch = ++_gearEpoch;
+    __weak DmGamepad *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        DmGamepad *pad = weakSelf;
+        if (pad && pad->_gearEpoch == epoch) pad->_menu.hidden = YES;
+    });
 }
 - (uint64_t)faceAt:(CGPoint)p {   // keys under the finger in the diamond (between two keys both count)
     uint64_t m = 0; CGFloat r = self.faceHitR;
@@ -441,8 +471,12 @@ int front_web_touch(void);
 - (void)touchesBegan:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e {
     BOOL game = NO;
     for (UITouch *t in ts) {
-        if (_padOff) { game |= [self gameBegin:t]; continue; }
         CGPoint p = [t locationInView:self];
+        if (_menu.hidden && !_gearRevealTap && [self acceptsGearRevealTap:p]) {
+            _gearRevealTap = t; _gearRevealStart = p; _gearRevealBegan = t.timestamp;
+            continue;
+        }
+        if (_padOff) { game |= [self gameBegin:t]; continue; }
         if (_layout.separated && !CGRectContainsPoint(_layout.controls, p)) { game |= [self gameBegin:t]; continue; }
         int hit = _tap ? -1 : [self btnAt:p];   // the menu button took its own touches (menuTakes)
         if (hit >= 0) { [_owner setObject:@(C_BTN | (uint64_t)hit << 8) forKey:t]; continue; }
@@ -477,6 +511,13 @@ int front_web_touch(void);
 - (void)endTouches:(NSSet<UITouch *> *)ts tapped:(BOOL)ended {
     BOOL game = NO;
     for (UITouch *t in ts) {
+        if (t == _gearRevealTap) {
+            CGPoint p = [t locationInView:self];
+            BOOL validTap = ended && t.timestamp - _gearRevealBegan < 0.7 && dist(p, _gearRevealStart) < 18 && [self acceptsGearRevealTap:p];
+            _gearRevealTap = nil;
+            if (validTap) [self revealGear];
+            continue;
+        }
         uint64_t v = [_owner objectForKey:t].unsignedLongLongValue;
         if ((v & 0xff) == C_GAME && (v >> 8) < 16) { _game[v >> 8] = nil; game = YES; }
         [_owner removeObjectForKey:t]; [_faceOf removeObjectForKey:t]; for (int i = 0; i < 2; i++) if (t == _stick[i]) _stick[i] = nil;
@@ -486,7 +527,7 @@ int front_web_touch(void);
 }
 - (void)touchesEnded:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e { [self endTouches:ts tapped:YES]; }
 - (void)touchesCancelled:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e { [self endTouches:ts tapped:NO]; }
-- (void)reset { [_owner removeAllObjects]; [_faceOf removeAllObjects]; _stick[0] = _stick[1] = nil; for (int i = 0; i < 16; i++) _game[i] = nil; [self pushGame]; [self recompute]; }
+- (void)reset { _gearRevealTap = nil; [_owner removeAllObjects]; [_faceOf removeAllObjects]; _stick[0] = _stick[1] = nil; for (int i = 0; i < 16; i++) _game[i] = nil; [self pushGame]; [self recompute]; }
 
 // ---- Shapes ----
 static CGPathRef circlePath(CGPoint c, CGFloat r) { return CGPathCreateWithEllipseInRect(CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r), NULL); }
