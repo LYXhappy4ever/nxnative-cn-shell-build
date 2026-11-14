@@ -1,0 +1,63 @@
+// One launcher setting as a row (a menu, a slider with its percentage, a toggle), shared by the iOS launcher (Launcher.swift) and the Mac app's settings window (dm/mac/Launcher.swift).
+// A row whose setting is fixed by an env file or by the launch environment is shown but disabled.
+import SwiftUI
+
+extension LauncherModel {
+    func binding(_ s: Setting) -> Binding<String> { Binding(get: { self.values[s.env] ?? s.def }, set: { self.values[s.env] = $0 }) }
+}
+
+struct SettingRow: View {
+    let s: Setting
+    @ObservedObject var m: LauncherModel
+
+    private var locked: Bool { m.fixed.contains(s.env) }
+    private var note: String {
+        let baseNote = s.note.isEmpty ? "" : DMChineseUI.text(s.note)
+        guard locked else { return baseNote }
+        return (baseNote.isEmpty ? "" : baseNote + " · ") + (m.fromLaunch.contains(s.env) ? "已由启动参数固定" : "已由 env.txt 固定")
+    }
+    private var rangeValue: Binding<Double> {
+        Binding(get: { Double(m.values[s.env] ?? s.def) ?? s.max ?? 1 },
+                set: { m.values[s.env] = String(format: "%.2f", $0) })
+    }
+    private var percentage: String { m.rangeLabel(s, rangeValue.wrappedValue) }
+
+    // 粗白字：这一页背后是照片，细字压上去读不清（坤哥 2026-11-08 定的口径，和 Controls/Performance 一致）
+    private var settingLabel: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(DMChineseUI.text(s.label)).font(.body.weight(.semibold)).foregroundStyle(.white)
+            if !note.isEmpty { Text(note).font(.footnote.weight(.medium)).foregroundStyle(.white.opacity(0.85)) }
+        }
+    }
+
+    var body: some View {
+        Group {
+            switch s.kind {
+            case "choice":
+                Picker(selection: m.binding(s)) {
+                    ForEach(s.options ?? [], id: \.[0]) { Text(DMChineseUI.text($0[1])).tag($0[0]) }
+                } label: {
+                    settingLabel
+                }
+                .pickerStyle(.menu)
+                .tint(.white)                         // 选中的值默认是系统蓝，压在白字里格外扎眼
+            case "range":
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        settingLabel
+                        Spacer()
+                        Text(percentage).monospacedDigit().foregroundStyle(.white)
+                    }
+                    Slider(value: rangeValue, in: (s.min ?? 0)...(s.max ?? 1), step: s.step ?? 0.05)
+                        .accessibilityLabel(DMChineseUI.text(s.label))
+                        .accessibilityValue(percentage)
+                }
+            default:
+                Toggle(isOn: Binding(get: { (m.values[s.env] ?? s.def) == s.onValue }, set: { m.values[s.env] = $0 ? s.onValue : s.offValue })) {
+                    settingLabel
+                }
+            }
+        }
+        .disabled(locked)
+    }
+}

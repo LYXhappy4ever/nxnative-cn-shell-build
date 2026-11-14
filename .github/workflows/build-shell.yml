@@ -1,0 +1,61 @@
+name: Build Chinese UI iOS Shell (Xcode 27)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nxnative-cn-shell-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Xcode 27 unsigned iOS shell
+    runs-on: xcode-27
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen and fontTools
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
+          python3 -m pip install --quiet --break-system-packages fonttools \
+            || python3 -m pip install --quiet fonttools
+          xcodegen --version
+          python3 -c 'import fontTools; print("fonttools", fontTools.version)'
+
+      - name: Compile unsigned game-free shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DM_ROOT="$RUNNER_TEMP/dm-work"
+          export DM_LANG="zh-Hans"
+          bash dm/ios/tools/shell_build.sh
+          test -f "$DM_ROOT/build/shell/nxnative-shell-build-input.zip"
+          mkdir -p dist
+          cp "$DM_ROOT/build/shell/nxnative-shell-build-input.zip" dist/nxnative-shell-build-input.zip
+          cp "$DM_ROOT/build/shell/shell_files.tsv" dist/shell_files.tsv
+          shasum -a 256 dist/nxnative-shell-build-input.zip | tee dist/shell-sha256.txt
+
+      - name: Upload shell build input
+        uses: actions/upload-artifact@v4
+        with:
+          name: nxnative-shell-build-input
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: ${{ runner.temp }}/dm-work/build/shell/*
+          if-no-files-found: ignore
+          retention-days: 7
