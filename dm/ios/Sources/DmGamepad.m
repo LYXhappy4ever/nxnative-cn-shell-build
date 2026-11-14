@@ -630,7 +630,13 @@ void dm_game_menu_set_open(bool open) {
 }
 bool dm_game_menu_is_open(void) { return atomic_load(&g_menu_open); }
 
-static int32_t axis(float v) { return (int32_t)(fmaxf(-1.f, fminf(1.f, v)) * 32767); }
+static int32_t axis(float v) {
+    float dz = 0.12f;
+    float av = fabsf(v);
+    if (av <= dz) return 0;
+    float out = copysignf(fminf(1.f, (av - dz) / (1.f - dz)), v);
+    return (int32_t)(out * 32767);
+}
 static const char *pad_name(GCController *c);
 static void npad_name(int p, char *out, size_t cap);
 static int cp_poll(void);
