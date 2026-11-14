@@ -1,0 +1,53 @@
+namespace Ryujinx.Graphics.Shader.IntermediateRepresentation
+{
+    enum IoVariable
+    {
+        Invalid,
+
+        BackColorDiffuse,
+        BackColorSpecular,
+        BaseInstance,
+        BaseVertex,
+        ClipDistance,
+        CtaId,
+        DrawIndex,
+        FogCoord,
+        FragmentCoord,
+        FragmentOutputColor,
+        FragmentOutputDepth,
+        FrontColorDiffuse,
+        FrontColorSpecular,
+        FrontFacing,
+        GlobalId,
+        InstanceId,
+        InstanceIndex,
+        InvocationId,
+        Layer,
+        PatchVertices,
+        PointCoord,
+        PointSize,
+        Position,
+        PrimitiveId,
+        SampleId,
+        SubgroupEqMask,
+        SubgroupGeMask,
+        SubgroupGtMask,
+        SubgroupLaneId,
+        SubgroupLeMask,
+        SubgroupLtMask,
+        TessellationCoord,
+        TessellationLevelInner,
+        TessellationLevelOuter,
+        TextureCoord,
+        ThreadId,
+        ThreadKill,
+        UserDefined,
+        VertexId,
+        VertexIndex,
+        ViewportIndex,
+        ViewportMask,
+        HelperInvocation,   // nxnative: at the end, so the others keep their numbers
+        BaryCoord,          // nxnative: the pixel's barycentric coordinates, perspective (a[0x3b4]) and screen-linear (a[0x3a8])
+        BaryCoordNoPersp,
+    }
+}
