@@ -218,8 +218,9 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
         __weak DmGamepad *weakSelf = self;
         [_menu addAction:[UIAction actionWithHandler:^(UIAction *a) {
             (void)a;
-            [weakSelf reset];
-            if (weakSelf) weakSelf->_menu.hidden = YES;
+            DmGamepad *strongSelf = weakSelf;
+            [strongSelf reset];
+            if (strongSelf) strongSelf->_menu.hidden = YES;
             dm_game_menu_toggle();
         }] forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_menu];
