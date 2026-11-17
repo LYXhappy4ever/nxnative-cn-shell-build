@@ -259,12 +259,12 @@ static void lock_find(void) {
 // presenting at a cap the game does not step by runs a fixed-step game fast or slow (Tears of the Kingdom 1.4.2 at 2x with DM_FPS_TARGET=60)
 int dm_fps_lock_engine(void) { pthread_once(&g_found, lock_find); return nrow || nier || fb.n || uq.base; }
 int nvn_fps_high_now(void);   // hle_nvn.c
-static _Atomic int g_fps_lock_reinit = 0;
-void dm_fps_lock_refresh(void) { atomic_store(&g_fps_lock_reinit, 1); }
+static int g_fps_lock_reinit = 0;
+void dm_fps_lock_refresh(void) { __atomic_store_n(&g_fps_lock_reinit, 1, __ATOMIC_RELEASE); }
 void dm_fps_lock_tick(void) {
     dynamic_resolution_tick();   // separate from the FPS cap
     static int state = -2, nlog[NLOCKS + 5], target, high; static const char *src;
-    if (atomic_exchange(&g_fps_lock_reinit, 0)) state = -2;
+    if (__atomic_exchange_n(&g_fps_lock_reinit, 0, __ATOMIC_ACQUIRE)) state = -2;
     if (state == -1) return;
     if (state == -2) {
         state = -1; pthread_once(&g_found, lock_find);
