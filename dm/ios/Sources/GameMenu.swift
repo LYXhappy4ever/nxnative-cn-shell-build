@@ -58,6 +58,8 @@ private final class GameMenuState: ObservableObject {
     private func iconForEnv(_ env: String) -> String {
         switch env {
         case "DM_OPMODE": return "tv.and.mediabox"
+        case "DM_QUALITY_PRESET": return "paintpalette.fill"
+        case "DM_UE_RES_SCALE": return "viewfinder"
         case "DM_RENDER_SCALE": return "arrow.up.left.and.arrow.down.right"
         case "DM_PRESENT_UPSCALE": return "wand.and.stars"
         case "DM_FPS_TARGET": return "speedometer"

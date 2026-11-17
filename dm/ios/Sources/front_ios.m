@@ -319,6 +319,14 @@ bool dm_setting_live(const char *env, const char *value) {
         }
         return true;
     }
+    if (!strcmp(env, "DM_QUALITY_PRESET") || !strcmp(env, "DM_UE_RES_SCALE")) {
+        if (value) {
+            extern void dm_ue_cvar_refresh(void);
+            dm_ue_cvar_refresh();
+            LOG("front end: %s=%s (in-game menu)", env, value);
+        }
+        return true;
+    }
     if (!strcmp(env, "DM_TOUCH_HAPTICS")) { if (value) dm_gamepad_touch_feedback(atoi(value) != 0); return true; }
     if (!strcmp(env, "DM_RUMBLE")) { if (value) { dm_haptics_set_enabled(atoi(value) != 0); LOG("front end: game rumble %s (in-game menu)", atoi(value) ? "on" : "off"); } return true; }
     return false;
