@@ -2252,24 +2252,27 @@ static int fstep_on(void) { return fps_step_cap() != 0; }   // the host decides 
 // declares that the game steps by the time that passed (its present interval is its
 // only limit), so there the cap is applied as the present interval alone: Red Dead
 // Redemption asks for interval 2 once and steps by time, and its 60 needs no limiter.
-static int g_present_cap = -1;
+static _Atomic int g_present_cap = -1;
+void dm_nvn_refresh_fps_cap(void) { atomic_store(&g_present_cap, -1); }
 static int display_mode(void) {   // present_cfg's choice, also before its first call (the cap can be asked for before the window's first interval)
     if (g_hz >= 0) return g_display_mode;
     const char *m = getenv("DM_PRESENT_INTERVAL"); return m ? !strcmp(m, "display") : DM_GAME_PRESENT_DISPLAY;
 }
 static int fps_present_cap(void) {
     if (dm_fps_state || fps_high()) return fps_step_cap();
-    if (g_present_cap < 0) {
+    int pc = atomic_load(&g_present_cap);
+    if (pc < 0) {
         const char *e=getenv("DM_FPS_TARGET");int t=e?atoi(e):DM_GAME_FPS_TARGET;
-        g_present_cap=t==30||t==60?t:t==120?60:0;   // 120 here: not this game's (fps_high), so it runs at 60
-        if (g_present_cap && !dm_fps_lock_engine() && display_mode())
-            LOG("[nvn] present cap %d fps (%s) applied by the present interval alone: display mode, and this main has no engine frame limit the host writes", g_present_cap, e ? "DM_FPS_TARGET" : "game profile fps_target");
-        else if (g_present_cap && !dm_fps_lock_engine()) {
-            LOG("[nvn] present cap %d fps (%s) not applied: this main has neither a frame step nor an engine frame limit the host writes, so the game's own present interval stays", g_present_cap, e ? "DM_FPS_TARGET" : "game profile fps_target");
-            g_present_cap=0;
+        pc=t==30||t==60?t:t==120?60:0;   // 120 here: not this game's (fps_high), so it runs at 60
+        if (pc && !dm_fps_lock_engine() && display_mode())
+            LOG("[nvn] present cap %d fps (%s) applied by the present interval alone: display mode, and this main has no engine frame limit the host writes", pc, e ? "DM_FPS_TARGET" : "game profile fps_target");
+        else if (pc && !dm_fps_lock_engine()) {
+            LOG("[nvn] present cap %d fps (%s) not applied: this main has neither a frame step nor an engine frame limit the host writes, so the game's own present interval stays", pc, e ? "DM_FPS_TARGET" : "game profile fps_target");
+            pc=0;
         }
+        atomic_store(&g_present_cap, pc);
     }
-    return g_present_cap;
+    return pc;
 }
 static nvn_fstep g_fs;   // present thread only
 static nvn_fgpu g_fg;   // the GPU time at kmin and at the current hold (nvn_fstep_gpu_slowed)

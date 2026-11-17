@@ -307,6 +307,18 @@ bool dm_setting_live(const char *env, const char *value) {
         return true;
     }
     if (!strcmp(env, "DM_SHOW_FPS")) { if (value) [g_root showFPS:atoi(value) != 0]; return true; }
+    if (!strcmp(env, "DM_PRESENT_UPSCALE")) {
+        if (value) { extern void dm_nvn_refresh_upscale(void); dm_nvn_refresh_upscale(); LOG("front end: present upscaling %s (in-game menu)", value); }
+        return true;
+    }
+    if (!strcmp(env, "DM_FPS_TARGET")) {
+        if (value) {
+            extern void dm_fps_lock_refresh(void); extern void dm_nvn_refresh_fps_cap(void);
+            dm_fps_lock_refresh(); dm_nvn_refresh_fps_cap();
+            LOG("front end: target frame rate %s (in-game menu)", value);
+        }
+        return true;
+    }
     if (!strcmp(env, "DM_TOUCH_HAPTICS")) { if (value) dm_gamepad_touch_feedback(atoi(value) != 0); return true; }
     if (!strcmp(env, "DM_RUMBLE")) { if (value) { dm_haptics_set_enabled(atoi(value) != 0); LOG("front end: game rumble %s (in-game menu)", atoi(value) ? "on" : "off"); } return true; }
     return false;
