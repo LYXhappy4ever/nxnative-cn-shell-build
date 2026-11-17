@@ -128,9 +128,14 @@ final class LauncherModel: ObservableObject {
 
     // DM_LAUNCHER=0: no screen, but the saved choices still apply (only DM_SAVED_CHOICES=0 ignores them); nothing is written
     func applySaved() {
+        let applyDefaults: Set<String> = ["DM_QUALITY_PRESET", "DM_UE_RES_SCALE", "DM_PRESENT_UPSCALE", "DM_OPMODE", "DM_FPS_TARGET"]
         for s in settings where !fixed.contains(s.env) {
             let v = values[s.env] ?? s.def
-            if !s.isDefault(v) { setenv(s.env, v, 1); fputs("launcher: \(s.env)=\(v) (saved choice)\n", stderr) }
+            if !s.isDefault(v) {
+                setenv(s.env, v, 1); fputs("launcher: \(s.env)=\(v) (saved choice)\n", stderr)
+            } else if applyDefaults.contains(s.env) {
+                setenv(s.env, v, 0); fputs("launcher: \(s.env)=\(v) (default choice)\n", stderr)
+            }
         }
     }
 }
