@@ -58,6 +58,7 @@ private final class GameMenuState: ObservableObject {
     private func iconForEnv(_ env: String) -> String {
         switch env {
         case "DM_OPMODE": return "tv.and.mediabox"
+        case "DM_RENDER_SCALE": return "arrow.up.left.and.arrow.down.right"
         case "DM_PRESENT_UPSCALE": return "wand.and.stars"
         case "DM_FPS_TARGET": return "speedometer"
         case "DM_PICTURE_FIT": return "aspectratio"
@@ -73,8 +74,10 @@ private final class GameMenuState: ObservableObject {
         let fixed = m.fixed.contains(s.env)
         let title = DMChineseUI.text(s.label)
         let icon = iconForEnv(s.env)
+        let isLive = dm_setting_live(s.env, nil)
         let noteText = s.note.isEmpty ? nil : DMChineseUI.text(s.note)
-        let sub = fixed ? "已由 env.txt 固定" : noteText
+        let sub = fixed ? "已由 env.txt 固定" : (!isLive ? (noteText ?? "修改后将在下次重新打开游戏时生效") : noteText)
+        let badge = fixed ? nil : (isLive ? "实时" : "重开生效")
 
         if s.kind == "toggle" {
             let isOn = (now == s.onValue)
@@ -85,7 +88,7 @@ private final class GameMenuState: ObservableObject {
                 title: title,
                 valueText: isOn ? "已开启" : "已关闭",
                 subtitle: sub,
-                badgeText: fixed ? nil : "实时",
+                badgeText: badge,
                 disabled: fixed
             ) { _ in
                 let next = isOn ? s.offValue : s.onValue
@@ -104,7 +107,7 @@ private final class GameMenuState: ObservableObject {
                 title: title,
                 valueText: DMChineseUI.text(currentLabel),
                 subtitle: sub,
-                badgeText: fixed ? nil : "实时",
+                badgeText: badge,
                 disabled: fixed || opts.count <= 1
             ) { dir in
                 guard !opts.isEmpty else { return }
@@ -115,7 +118,38 @@ private final class GameMenuState: ObservableObject {
                 let nextLabel = DMChineseUI.text(opts[nextPos][1])
                 m.choose(s, nextVal)
                 _ = dm_setting_live(s.env, nextVal)
-                self.statusNote = "已将「\(title)」调整为：\(nextLabel)"
+                self.statusNote = isLive
+                    ? "已将「\(title)」调整为：\(nextLabel)"
+                    : "已保存「\(title)」为 \(nextLabel)（重开游戏生效）"
+                self.rebuild()
+            })
+        } else if s.kind == "range", let lo = s.min, let hi = s.max {
+            let cur = Double(now) ?? (Double(s.def) ?? lo)
+            let label = m.rangeLabel(s, cur)
+            list.append(MenuItem(
+                id: "set.\(s.env)",
+                icon: icon,
+                section: sectionOverride,
+                title: title,
+                valueText: label,
+                subtitle: sub,
+                badgeText: badge,
+                disabled: fixed
+            ) { dir in
+                let jump = (s.env == "DM_RENDER_SCALE") ? 0.25 : (s.step ?? 0.1)
+                let delta = (dir < 0 ? -jump : jump)
+                var next = cur + delta
+                if next > hi + 1e-6 { next = lo }
+                if next < lo - 1e-6 { next = hi }
+                next = (next / jump).rounded() * jump
+                next = min(hi, max(lo, next))
+                let nextStr = String(format: "%.2f", next)
+                m.choose(s, nextStr)
+                _ = dm_setting_live(s.env, nextStr)
+                let nextLabel = m.rangeLabel(s, next)
+                self.statusNote = isLive
+                    ? "已将「\(title)」调整为：\(nextLabel)"
+                    : "已保存「\(title)」为 \(nextLabel)（重开游戏生效）"
                 self.rebuild()
             })
         }
@@ -134,7 +168,7 @@ private final class GameMenuState: ObservableObject {
         case .display:
             if let m = gameMenuModel {
                 for section in m.sections where section == "Game" || section == "Performance" {
-                    for s in m.rows(in: section) where (s.kind == "choice" || s.kind == "toggle") && dm_setting_live(s.env, nil) {
+                    for s in m.rows(in: section) where (s.kind == "choice" || s.kind == "toggle" || s.kind == "range") && (dm_setting_live(s.env, nil) || s.env == "DM_RENDER_SCALE") {
                         let secTitle = section == "Performance" ? "性能监控" : "显示与性能调节"
                         appendSettingItem(s, model: m, sectionOverride: secTitle, into: &list)
                     }
