@@ -23,13 +23,38 @@ fragment float4 fs_down(V in [[stage_in]], texture2d<float> t [[texture(0)]], sa
     return float4(sum / max(wsum, 1e-4), 1.0);
 }
 
-fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], texture2d<float> ambTex [[texture(1)]], sampler s [[sampler(0)]], constant Crop& c [[buffer(0)]]) {
+fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], texture2d<float> ambTex [[texture(1)]], texture2d<float> nearTex [[texture(2)]], sampler s [[sampler(0)]], constant Crop& c [[buffer(0)]]) {
     if (c.box.z <= 0.0) {
         return t.sample(s, clamp(in.uv * c.rect.zw + c.rect.xy, c.edge.xy, c.edge.zw));
     }
     float2 b0 = c.box.xy, b1 = c.box.zw, bsz = max(b1 - b0, float2(1e-5));
     float2 clamped = clamp(in.uv, b0, b1);
     float2 guv = (clamped - b0) / bsz;
+    bool hasBarY = (b0.y > 0.002) || (b1.y < 0.998);
+    bool hasBarX = (b0.x > 0.002) || (b1.x < 0.998);
+    if (hasBarY && !hasBarX) {
+        float2 srcUV = clamp(guv * c.rect.zw + c.rect.xy, c.edge.xy, c.edge.zw);
+        float3 edgeOrGame = t.sample(s, srcUV).rgb;
+        if (in.uv.y >= b0.y && in.uv.y <= b1.y)
+            return float4(edgeOrGame, 1.0);
+
+        // Match the main image at the seam, then soften only outside the viewport.
+        bool top = in.uv.y < b0.y;
+        float distance = top ? b0.y - in.uv.y : in.uv.y - b1.y;
+        float barHeight = top ? b0.y : 1.0 - b1.y;
+        float p = saturate(distance / max(barHeight, 1e-5));
+        float offset = (top ? 1.0 : -1.0) * distance / bsz.y;
+        float edgeY = top ? 0.0 : 1.0;
+        float3 nearCol = nearTex.sample(s, float2(guv.x, saturate(edgeY + 0.30 * offset))).rgb;
+        float3 farCol = ambTex.sample(s, float2(guv.x, saturate(edgeY + 0.12 * offset))).rgb;
+        float3 soft = mix(nearCol, farCol, smoothstep(0.22, 0.91, p));
+        float3 color = mix(edgeOrGame, soft, smoothstep(0.0, 0.36, p));
+        float x = 2.0 * guv.x - 1.0;
+        float shade = 1.0 - 0.72 * smoothstep(0.10, 1.0, p);
+        float corner = 1.0 - 0.18 * x * x * smoothstep(0.15, 1.0, p);
+        return float4(color * shade * corner, 1.0);
+    }
+
     float dist = length(in.uv - clamped);
     float barH = max(max(b0.y, 1.0 - b1.y), max(b0.x, 1.0 - b1.x));
     float normD = clamp(dist / max(barH, 0.01), 0.0, 1.0);
@@ -45,8 +70,6 @@ fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], texture
     if (in.uv.x >= b0.x && in.uv.x <= b1.x && in.uv.y >= b0.y && in.uv.y <= b1.y) {
         float3 fg = t.sample(s, clamp(guv * c.rect.zw + c.rect.xy, c.edge.xy, c.edge.zw)).rgb;
         // Feather only on axes that actually have black bars
-        bool hasBarY = (b0.y > 0.002) || (b1.y < 0.998);
-        bool hasBarX = (b0.x > 0.002) || (b1.x < 0.998);
         float fy = hasBarY ? smoothstep(0.0, 0.04, min(in.uv.y - b0.y, b1.y - in.uv.y) / bsz.y) : 1.0;
         float fx = hasBarX ? smoothstep(0.0, 0.04, min(in.uv.x - b0.x, b1.x - in.uv.x) / bsz.x) : 1.0;
         float feather = min(fx, fy);

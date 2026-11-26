@@ -753,7 +753,7 @@ void mtl_init(void) {
     g_ot = rec_table([g_dev newArgumentTableWithDescriptor:atd error:&ate]); if (!g_ot) MDIE("failed to create the object argument table: %s", ate.localizedDescription.UTF8String);
     g_up_ct = [g_dev newArgumentTableWithDescriptor:atd error:&ate]; if (!g_up_ct) MDIE("failed to create the upload compute argument table: %s", ate.localizedDescription.UTF8String);
     MTL4ArgumentTableDescriptor *pad = [MTL4ArgumentTableDescriptor new];
-    pad.maxTextureBindCount = 2; pad.maxSamplerStateBindCount = 1; pad.maxBufferBindCount = 1;
+    pad.maxTextureBindCount = 3; pad.maxSamplerStateBindCount = 1; pad.maxBufferBindCount = 1;
     g_present_args = [g_dev newArgumentTableWithDescriptor:pad error:&ate];
     if (!g_present_args) MDIE("failed to create the present argument table: %s", ate.localizedDescription.UTF8String);
     for (int i = 0; i < 3; i++) {
@@ -16317,7 +16317,12 @@ static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTex
     rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
     id<MTLRenderCommandEncoder> en = [cb renderCommandEncoderWithDescriptor:rp];
-    [en setRenderPipelineState:g_blit_pso]; [en setFragmentTexture:present_raw_src(src) atIndex:0]; [en setFragmentTexture:present_raw_src(src) atIndex:1]; [en setFragmentSamplerState:g_blit_samp atIndex:0];
+    id<MTLTexture> tex = present_raw_src(src);
+    [en setRenderPipelineState:g_blit_pso];
+    [en setFragmentTexture:tex atIndex:0];
+    [en setFragmentTexture:tex atIndex:1];
+    [en setFragmentTexture:tex atIndex:2];
+    [en setFragmentSamplerState:g_blit_samp atIndex:0];
     float uv[12] = {(float)cx / src.width, (float)cy / src.height, (float)cw / src.width, (float)ch / src.height,
                     (cx + 0.5f) / src.width, (cy + 0.5f) / src.height, (cx + cw - 0.5f) / src.width, (cy + ch - 0.5f) / src.height,
                     0, 0, 0, 0};
@@ -16679,6 +16684,7 @@ static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MT
     [en setArgumentTable:g_present_args atStages:MTLRenderStageFragment];
     [g_present_args setTexture:tex.gpuResourceID atIndex:0];
     [g_present_args setTexture:(amb ? g_amb_tex2 : tex).gpuResourceID atIndex:1];
+    [g_present_args setTexture:(amb ? g_amb_tex1 : tex).gpuResourceID atIndex:2];
     [g_present_args setSamplerState:g_blit_samp.gpuResourceID atIndex:0];
     float *uv = uvb.contents;
     uv[0] = (float)cx / tw; uv[1] = (float)cy / th; uv[2] = (float)cw / tw; uv[3] = (float)ch / th;
