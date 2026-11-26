@@ -1,52 +1,62 @@
-// The present: the frame drawn into the drawable, cropped + seamless Ambilight glow (nvn_mtl.m present_pipeline)
+// The present: the frame drawn into the drawable, cropped + cinema-grade feathered Ambilight (nvn_mtl.m present_pipeline)
 #include <metal_stdlib>
 using namespace metal;
 struct V { float4 p [[position]]; float2 uv; };
 vertex V vs(uint id [[vertex_id]]) { float2 uv = float2((id << 1) & 2, id & 2); V o; o.p = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1); o.uv = uv; return o; }
 struct Crop { float4 rect; float4 edge; float4 box; };
-fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant Crop& c [[buffer(0)]]) {
-    if (c.box.z <= 0.0) {
-        return t.sample(s, clamp(in.uv * c.rect.zw + c.rect.xy, c.edge.xy, c.edge.zw));
-    }
-    float2 b0 = c.box.xy, b1 = c.box.zw, bsz = max(b1 - b0, float2(1e-5));
-    if (in.uv.x >= b0.x && in.uv.x <= b1.x && in.uv.y >= b0.y && in.uv.y <= b1.y) {
-        float2 guv = (in.uv - b0) / bsz;
-        return t.sample(s, clamp(guv * c.rect.zw + c.rect.xy, c.edge.xy, c.edge.zw));
-    }
-    // Outside game box (bars): start at 1.00 brightness & 0 blur right at the seam so there is zero visible cut line,
-    // then progressively bloom blur radius and fade gently outward like YouTube Ambient Mode.
-    float2 clamped = clamp(in.uv, b0, b1);
-    float2 guv = (clamped - b0) / bsz;
-    float dist = length(in.uv - clamped);
-    float barH = max(max(b0.y, 1.0 - b1.y), max(b0.x, 1.0 - b1.x));
-    float normD = clamp(dist / max(barH, 0.01), 0.0, 1.0);
-    float curve = smoothstep(0.0, 1.0, normD);
 
-    // At normD=0, sample right on the exact border pixel; gradually pull inward as normD grows
-    float2 inward = (clamped - 0.5 * (b0 + b1)) / bsz;
-    guv = clamp(guv - inward * (0.08 * curve), float2(0.001), float2(0.999));
-    float2 base = guv * c.rect.zw + c.rect.xy;
+static inline float3 sample_game(texture2d<float> t, sampler s, float2 guv, constant Crop& c) {
+    return t.sample(s, clamp(guv * c.rect.zw + c.rect.xy, c.edge.xy, c.edge.zw)).rgb;
+}
 
-    // Progressive 21-tap blur: almost sharp at seam (0.004), very soft outward (0.16)
-    float rx = mix(0.004, 0.18, curve) * abs(c.rect.z);
-    float ry = mix(0.002, 0.08, curve) * abs(c.rect.w);
+static inline float3 sample_ambient(texture2d<float> t, sampler s, float2 guv, constant Crop& c) {
+    // Pull deep enough inward (0.14) and blur very wide so text/UI lines never streak or ghost into the bars
+    float2 center = float2(0.5, 0.5);
+    float2 deep = mix(guv, center, 0.16);
+    float2 base = deep * c.rect.zw + c.rect.xy;
+    float rx = 0.24 * abs(c.rect.z);
+    float ry = 0.16 * abs(c.rect.w);
     float3 sum = float3(0.0);
     float wsum = 0.0;
-    for (int iy = -1; iy <= 1; iy++) {
-        float wy = (iy == 0) ? 0.5 : 0.25;
+    for (int iy = -2; iy <= 2; iy++) {
+        float wy = exp(-0.45 * float(iy * iy));
         for (int ix = -3; ix <= 3; ix++) {
-            float wx = exp(-0.22 * float(ix * ix));
+            float wx = exp(-0.25 * float(ix * ix));
             float w = wx * wy;
-            float2 suv = clamp(base + float2(float(ix) / 3.0 * rx, float(iy) * ry), c.edge.xy, c.edge.zw);
+            float2 suv = clamp(base + float2(float(ix) / 3.0 * rx, float(iy) / 2.0 * ry), c.edge.xy, c.edge.zw);
             sum += t.sample(s, suv).rgb * w;
             wsum += w;
         }
     }
     sum /= max(wsum, 1e-4);
-
-    // Seamless brightness: 1.00 right at the border (matches game edge 1:1), fading smoothly to soft ambient glow (0.14)
-    float falloff = mix(1.00, 0.14, pow(normD, 0.85));
     float luma = dot(sum, float3(0.299, 0.587, 0.114));
-    float3 vivid = mix(float3(luma), sum, mix(1.0, 1.30, curve));
-    return float4(clamp(vivid * falloff, 0.0, 1.0), 1.0);
+    return mix(float3(luma), sum, 1.35);
+}
+
+fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant Crop& c [[buffer(0)]]) {
+    if (c.box.z <= 0.0) {
+        return t.sample(s, clamp(in.uv * c.rect.zw + c.rect.xy, c.edge.xy, c.edge.zw));
+    }
+    float2 b0 = c.box.xy, b1 = c.box.zw, bsz = max(b1 - b0, float2(1e-5));
+    float2 clamped = clamp(in.uv, b0, b1);
+    float2 guv = (clamped - b0) / bsz;
+    float dist = length(in.uv - clamped);
+    float barH = max(max(b0.y, 1.0 - b1.y), max(b0.x, 1.0 - b1.x));
+    float normD = clamp(dist / max(barH, 0.01), 0.0, 1.0);
+
+    // Pure ambient glow color (soft, rich, zero sharp lines or text ghosting)
+    float3 glow = sample_ambient(t, s, guv, c);
+    float glowFade = mix(0.55, 0.12, smoothstep(0.0, 1.0, normD));
+    float3 barCol = glow * glowFade;
+
+    if (in.uv.x >= b0.x && in.uv.x <= b1.x && in.uv.y >= b0.y && in.uv.y <= b1.y) {
+        float3 fg = sample_game(t, s, guv, c);
+        // Feather the outer 2.5% of the game edge smoothly into the ambient glow to erase any hard cut line
+        float edgeY = min(in.uv.y - b0.y, b1.y - in.uv.y) / max(bsz.y, 1e-4);
+        float edgeX = min(in.uv.x - b0.x, b1.x - in.uv.x) / max(bsz.x, 1e-4);
+        float minEdge = min(edgeX, edgeY);
+        float feather = smoothstep(0.0, 0.022, minEdge);
+        return float4(clamp(mix(barCol, fg, feather), 0.0, 1.0), 1.0);
+    }
+    return float4(clamp(barCol, 0.0, 1.0), 1.0);
 }
