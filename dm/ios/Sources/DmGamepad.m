@@ -640,6 +640,47 @@ static int32_t axis(float v) {
 static const char *pad_name(GCController *c);
 static void npad_name(int p, char *out, size_t cap);
 static int cp_poll(void);
+// Quick speed toggle (1.0x <-> 2.0x) with a brief floating toast banner
+static int g_last_fast_speed = 200;
+static UILabel *g_speed_toast;
+static void dm_show_speed_toast(int pct) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIView *host = g_view;
+        if (!host) return;
+        if (!g_speed_toast) {
+            g_speed_toast = [[UILabel alloc] init];
+            g_speed_toast.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.82];
+            g_speed_toast.textColor = UIColor.whiteColor;
+            g_speed_toast.font = [UIFont boldSystemFontOfSize:14];
+            g_speed_toast.textAlignment = NSTextAlignmentCenter;
+            g_speed_toast.layer.cornerRadius = 15;
+            g_speed_toast.layer.masksToBounds = YES;
+            g_speed_toast.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.25].CGColor;
+            g_speed_toast.layer.borderWidth = 1;
+            [host addSubview:g_speed_toast];
+        }
+        g_speed_toast.text = pct > 100
+            ? [NSString stringWithFormat:@"⚡ 游戏倍速：%.1fx", pct / 100.0]
+            : @"▶ 游戏倍速：1.0x（正常）";
+        CGSize sz = [g_speed_toast sizeThatFits:CGSizeMake(260, 32)];
+        CGFloat w = MAX(sz.width + 28, 150);
+        g_speed_toast.frame = CGRectMake((host.bounds.size.width - w) / 2.0, host.safeAreaInsets.top + 14, w, 30);
+        g_speed_toast.alpha = 1.0;
+        g_speed_toast.hidden = NO;
+        [NSObject cancelPreviousPerformRequestsWithTarget:g_speed_toast selector:@selector(setHidden:) object:@YES];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [UIView animateWithDuration:0.25 animations:^{ g_speed_toast.alpha = 0.0; }];
+        });
+    });
+}
+static void dm_toggle_speed_quick(void) {
+    int cur = dm_get_game_speed();
+    if (cur > 100) g_last_fast_speed = cur;
+    int next = (cur > 100) ? 100 : (g_last_fast_speed > 100 ? g_last_fast_speed : 200);
+    dm_set_game_speed(next);
+    dm_show_speed_toast(next);
+}
+
 static void read_pad(GCExtendedGamepad *g) {
     _Static_assert(DM_BTN_A == 1u << B_A && DM_BTN_B == 1u << B_B && DM_BTN_X == 1u << B_X && DM_BTN_Y == 1u << B_Y, "face button bits");
     uint64_t m = dm_pad_face(g);   // by position, a Nintendo pad by its labels
@@ -667,6 +708,11 @@ static void read_pad(GCExtendedGamepad *g) {
             dm_game_menu_toggle();
         });
         return;
+    }
+
+    // Quick toggle speed (1.0x <-> 2.0x) on single R3 click (without L3) when menu is closed
+    if (!dm_game_menu_is_open() && (edge & (1ull << B_RS)) && !(m & (1ull << B_LS)) && !cp_poll()) {
+        dm_toggle_speed_quick();
     }
 
     if (dm_game_menu_is_open()) {
