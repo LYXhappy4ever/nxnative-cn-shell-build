@@ -753,7 +753,7 @@ void mtl_init(void) {
     g_ot = rec_table([g_dev newArgumentTableWithDescriptor:atd error:&ate]); if (!g_ot) MDIE("failed to create the object argument table: %s", ate.localizedDescription.UTF8String);
     g_up_ct = [g_dev newArgumentTableWithDescriptor:atd error:&ate]; if (!g_up_ct) MDIE("failed to create the upload compute argument table: %s", ate.localizedDescription.UTF8String);
     MTL4ArgumentTableDescriptor *pad = [MTL4ArgumentTableDescriptor new];
-    pad.maxTextureBindCount = 1; pad.maxSamplerStateBindCount = 1; pad.maxBufferBindCount = 1;
+    pad.maxTextureBindCount = 2; pad.maxSamplerStateBindCount = 1; pad.maxBufferBindCount = 1;
     g_present_args = [g_dev newArgumentTableWithDescriptor:pad error:&ate];
     if (!g_present_args) MDIE("failed to create the present argument table: %s", ate.localizedDescription.UTF8String);
     for (int i = 0; i < 3; i++) {
@@ -15845,8 +15845,11 @@ void mtl_exec(const uint8_t *p) {
 }
 
 // ---------- Present: draw the swapchain texture to the CAMetalLayer; optional screenshot ----------
-static id<MTLRenderPipelineState> g_blit_pso; static MTLPixelFormat g_blit_fmt;
+static id<MTLRenderPipelineState> g_blit_pso, g_amb_down_pso; static MTLPixelFormat g_blit_fmt;
 static id<MTLSamplerState> g_blit_samp;
+static id<MTLTexture> g_amb_tex1, g_amb_tex2;
+static id<MTLBuffer> g_amb_uv1[3], g_amb_uv2[3];
+static id<MTL4ArgumentTable> g_amb_args1, g_amb_args2;
 static uint64_t g_present_n;
 uint64_t mtl_present_count(void) { return g_present_n; }   // Actual present count (heat attribution DM_HEAT computes the present frame rate)
 void mtl_res_snapshot(mtl_res_count *out) {
@@ -16225,6 +16228,13 @@ static void present_pipeline(MTLPixelFormat format) {
         g_blit_pso = [g_dev newRenderPipelineStateWithDescriptor:pd error:&e];
         if (!g_blit_pso) MDIE("present pipeline failed %s", e.localizedDescription.UTF8String);
         g_blit_fmt = format;
+        if (!g_amb_down_pso) {
+            MTLRenderPipelineDescriptor *dd = [MTLRenderPipelineDescriptor new];
+            dd.vertexFunction = [lib newFunctionWithName:@"vs"]; dd.fragmentFunction = [lib newFunctionWithName:@"fs_down"];
+            dd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+            g_amb_down_pso = [g_dev newRenderPipelineStateWithDescriptor:dd error:&e];
+            if (!g_amb_down_pso) MDIE("ambilight downsample pipeline failed %s", e.localizedDescription.UTF8String);
+        }
         MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new]; sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear; sd.supportArgumentBuffers = YES;
         g_blit_samp = [g_dev newSamplerStateWithDescriptor:sd];
     }
@@ -16307,16 +16317,12 @@ static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTex
     rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
     id<MTLRenderCommandEncoder> en = [cb renderCommandEncoderWithDescriptor:rp];
-    [en setViewport:amb ? (MTLViewport){0, 0, dw, dh, 0, 1} : vp];
-    [en setRenderPipelineState:g_blit_pso]; [en setFragmentTexture:present_raw_src(src) atIndex:0]; [en setFragmentSamplerState:g_blit_samp atIndex:0];
+    [en setRenderPipelineState:g_blit_pso]; [en setFragmentTexture:present_raw_src(src) atIndex:0]; [en setFragmentTexture:present_raw_src(src) atIndex:1]; [en setFragmentSamplerState:g_blit_samp atIndex:0];
     float uv[12] = {(float)cx / src.width, (float)cy / src.height, (float)cw / src.width, (float)ch / src.height,
                     (cx + 0.5f) / src.width, (cy + 0.5f) / src.height, (cx + cw - 0.5f) / src.width, (cy + ch - 0.5f) / src.height,
                     0, 0, 0, 0};
-    if (amb) {
-        uv[8] = (float)(vp.originX / dw); uv[9] = (float)(vp.originY / dh);
-        uv[10] = (float)((vp.originX + vp.width) / dw); uv[11] = (float)((vp.originY + vp.height) / dh);
-    }
     if (atomic_load_explicit(&g_origin_ll, memory_order_relaxed)) { uv[1] += uv[3]; uv[3] = -uv[3]; }   // lower-left origin: the window image is stored bottom-up
+    [en setViewport:vp];
     [en setFragmentBytes:uv length:sizeof uv atIndex:0];
     [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [en endEncoding];
@@ -16560,15 +16566,108 @@ static int up_mfx_encode(NvShader *cs) {
 }
 // The present pass: src's valid rectangle drawn into dst (the drawable, or a screenshot's texture) as present_encode draws it, through MetalFX first where fx_encode takes it
 // (fx: the scaler state to use, nil = bilinear). uvb: the pass's crop constants (one buffer per present allocator, written by the CPU)
-static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, const int crop[4], id<MTLBuffer> uvb, fx_state *fx) {
+static void ambient_ensure_resources(void) {
+    if (g_amb_tex1 && g_amb_tex2 && g_amb_args1 && g_amb_args2) return;
+    if (!g_amb_tex1) {
+        MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:64 height:36 mipmapped:NO];
+        td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        td.storageMode = MTLStorageModePrivate;
+        g_amb_tex1 = [g_dev newTextureWithDescriptor:td];
+        if (!g_amb_tex1) MDIE("failed to create ambilight pass1 texture");
+        res_add(g_amb_tex1);
+    }
+    if (!g_amb_tex2) {
+        MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:16 height:9 mipmapped:NO];
+        td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        td.storageMode = MTLStorageModePrivate;
+        g_amb_tex2 = [g_dev newTextureWithDescriptor:td];
+        if (!g_amb_tex2) MDIE("failed to create ambilight pass2 texture");
+        res_add(g_amb_tex2);
+    }
+    NSError *ate = nil;
+    MTL4ArgumentTableDescriptor *pad = [MTL4ArgumentTableDescriptor new];
+    pad.maxTextureBindCount = 1; pad.maxSamplerStateBindCount = 1; pad.maxBufferBindCount = 1;
+    if (!g_amb_args1) {
+        g_amb_args1 = [g_dev newArgumentTableWithDescriptor:pad error:&ate];
+        if (!g_amb_args1) MDIE("failed to create ambilight arg table 1: %s", ate.localizedDescription.UTF8String);
+    }
+    if (!g_amb_args2) {
+        g_amb_args2 = [g_dev newArgumentTableWithDescriptor:pad error:&ate];
+        if (!g_amb_args2) MDIE("failed to create ambilight arg table 2: %s", ate.localizedDescription.UTF8String);
+    }
+    for (int i = 0; i < 3; i++) {
+        if (!g_amb_uv1[i]) {
+            g_amb_uv1[i] = [g_dev newBufferWithLength:sizeof(float) * 12 options:MTLResourceStorageModeShared];
+            if (!g_amb_uv1[i]) MDIE("failed to create ambilight uv1 buffer[%d]", i);
+            res_add(g_amb_uv1[i]);
+        }
+        if (!g_amb_uv2[i]) {
+            g_amb_uv2[i] = [g_dev newBufferWithLength:sizeof(float) * 12 options:MTLResourceStorageModeShared];
+            if (!g_amb_uv2[i]) MDIE("failed to create ambilight uv2 buffer[%d]", i);
+            res_add(g_amb_uv2[i]);
+        }
+    }
+    res_commit();
+}
+
+static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, const int crop[4], id<MTLBuffer> uvb, fx_state *fx, int alloc_i) {
     NSUInteger r[4]; if (!present_crop_rect(src, crop, r)) return 0;
     present_pipeline(dst.pixelFormat);
     double dw = dst.width, dh = dst.height;
     MTLViewport vp = present_fit(src, dw, dh);
     int full = vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
-    int amb = !full && ambient_fit_on();
+    int amb = (alloc_i >= 0 && alloc_i < 3) && !full && ambient_fit_on();
     id<MTLTexture> tex = present_raw_src(src), up = fx ? fx_encode(fx, cb, tex, r, vp, dst.pixelFormat, fx == &g_fx_present) : nil;
     if (up) { tex = up; r[0] = r[1] = 0; r[2] = up.width; r[3] = up.height; }   // the scaled picture, the viewport's size: drawn 1:1
+    NSUInteger tw = tex.width, th = tex.height, cx = r[0], cy = r[1], cw = r[2], ch = r[3];
+    int flip_y = atomic_load_explicit(&g_origin_ll, memory_order_relaxed) != 0;
+
+    if (amb) {
+        ambient_ensure_resources();
+        // Pass 1: downsample source (with origin flip applied) into 64x36 upright texture
+        float *u1 = g_amb_uv1[alloc_i].contents;
+        u1[0] = (float)cx / tw; u1[1] = (float)cy / th; u1[2] = (float)cw / tw; u1[3] = (float)ch / th;
+        u1[4] = (cx + 0.5f) / tw; u1[5] = (cy + 0.5f) / th; u1[6] = (cx + cw - 0.5f) / tw; u1[7] = (cy + ch - 0.5f) / th;
+        u1[8] = 1.0f / 64.0f; u1[9] = 1.0f / 36.0f; u1[10] = 0.0f; u1[11] = 0.0f;
+        if (flip_y) { u1[1] += u1[3]; u1[3] = -u1[3]; }
+        MTL4RenderPassDescriptor *rp1 = [MTL4RenderPassDescriptor new];
+        rp1.colorAttachments[0].texture = g_amb_tex1;
+        rp1.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+        rp1.colorAttachments[0].storeAction = MTLStoreActionStore;
+        id<MTL4RenderCommandEncoder> en1 = [cb renderCommandEncoderWithDescriptor:rp1];
+        if (!en1) { MLOG("[RED] failed to create ambilight pass1 encoder"); return 0; }
+        [en1 barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:resource_vis()];
+        [en1 setArgumentTable:g_amb_args1 atStages:MTLRenderStageFragment];
+        [g_amb_args1 setTexture:tex.gpuResourceID atIndex:0];
+        [g_amb_args1 setSamplerState:g_blit_samp.gpuResourceID atIndex:0];
+        [g_amb_args1 setAddress:g_amb_uv1[alloc_i].gpuAddress atIndex:0];
+        [en1 setViewport:(MTLViewport){0, 0, 64, 36, 0, 1}];
+        [en1 setRenderPipelineState:g_amb_down_pso];
+        [en1 drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        m4_end(en1);
+
+        // Pass 2: downsample 64x36 upright texture into 16x9 upright smooth glow texture
+        float *u2 = g_amb_uv2[alloc_i].contents;
+        u2[0] = 0.0f; u2[1] = 0.0f; u2[2] = 1.0f; u2[3] = 1.0f;
+        u2[4] = 0.5f / 64.0f; u2[5] = 0.5f / 36.0f; u2[6] = 63.5f / 64.0f; u2[7] = 35.5f / 36.0f;
+        u2[8] = 1.0f / 16.0f; u2[9] = 1.0f / 9.0f; u2[10] = 0.0f; u2[11] = 0.0f;
+        MTL4RenderPassDescriptor *rp2 = [MTL4RenderPassDescriptor new];
+        rp2.colorAttachments[0].texture = g_amb_tex2;
+        rp2.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+        rp2.colorAttachments[0].storeAction = MTLStoreActionStore;
+        id<MTL4RenderCommandEncoder> en2 = [cb renderCommandEncoderWithDescriptor:rp2];
+        if (!en2) { MLOG("[RED] failed to create ambilight pass2 encoder"); return 0; }
+        [en2 barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:resource_vis()];
+        [en2 setArgumentTable:g_amb_args2 atStages:MTLRenderStageFragment];
+        [g_amb_args2 setTexture:g_amb_tex1.gpuResourceID atIndex:0];
+        [g_amb_args2 setSamplerState:g_blit_samp.gpuResourceID atIndex:0];
+        [g_amb_args2 setAddress:g_amb_uv2[alloc_i].gpuAddress atIndex:0];
+        [en2 setViewport:(MTLViewport){0, 0, 16, 9, 0, 1}];
+        [en2 setRenderPipelineState:g_amb_down_pso];
+        [en2 drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        m4_end(en2);
+    }
+
     MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
     rp.colorAttachments[0].texture = dst;
     rp.colorAttachments[0].loadAction = (full || amb) ? MTLLoadActionDontCare : MTLLoadActionClear;
@@ -16579,8 +16678,9 @@ static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MT
     [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:resource_vis()];
     [en setArgumentTable:g_present_args atStages:MTLRenderStageFragment];
     [g_present_args setTexture:tex.gpuResourceID atIndex:0];
+    [g_present_args setTexture:(amb ? g_amb_tex2 : tex).gpuResourceID atIndex:1];
     [g_present_args setSamplerState:g_blit_samp.gpuResourceID atIndex:0];
-    float *uv = uvb.contents; NSUInteger tw = tex.width, th = tex.height, cx = r[0], cy = r[1], cw = r[2], ch = r[3];
+    float *uv = uvb.contents;
     uv[0] = (float)cx / tw; uv[1] = (float)cy / th; uv[2] = (float)cw / tw; uv[3] = (float)ch / th;
     uv[4] = (cx + 0.5f) / tw; uv[5] = (cy + 0.5f) / th; uv[6] = (cx + cw - 0.5f) / tw; uv[7] = (cy + ch - 0.5f) / th;
     if (amb) {
@@ -16589,7 +16689,7 @@ static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MT
     } else {
         uv[8] = uv[9] = uv[10] = uv[11] = 0.0f;
     }
-    if (atomic_load_explicit(&g_origin_ll, memory_order_relaxed)) { uv[1] += uv[3]; uv[3] = -uv[3]; }   // lower-left origin: the window image is stored bottom-up
+    if (flip_y) { uv[1] += uv[3]; uv[3] = -uv[3]; }   // lower-left origin: the window image is stored bottom-up
     [g_present_args setAddress:uvb.gpuAddress atIndex:0];
     [en setViewport:amb ? (MTLViewport){0, 0, dw, dh, 0, 1} : vp]; [en setRenderPipelineState:g_blit_pso];
     [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
@@ -16606,7 +16706,7 @@ static int present_offscreen_m4(id<MTLTexture> src, const int crop[4], id<MTLTex
     fx_state fx = {0};
     res_add(out); res_add(uvb); res_commit();
     [cb beginCommandBufferWithAllocator:al];
-    int kind = present_encode_m4(cb, raw, out, crop, uvb, &fx);
+    int kind = present_encode_m4(cb, raw, out, crop, uvb, &fx, -1);
     [cb endCommandBuffer];
     if (!kind) { res_remove(out); res_remove(uvb); res_remove(fx.in); res_remove(fx.out); return 0; }
     MTL4CommitOptions *options = [MTL4CommitOptions new];
@@ -16717,7 +16817,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     [g_q4 waitForDrawable:dr];
     id<MTL4CommandBuffer> cb = g_present_cb[alloc_i];
     [cb beginCommandBufferWithAllocator:g_present_alloc4[alloc_i]];
-    int kind = present_encode_m4(cb, src, dr.texture, crop, g_present_uv[alloc_i], &g_fx_present);
+    int kind = present_encode_m4(cb, src, dr.texture, crop, g_present_uv[alloc_i], &g_fx_present, alloc_i);
     if (!kind) { [cb endCommandBuffer]; [g_q4 signalDrawable:dr]; return 0; }
     int fx_kind = kind == PRESENT_METALFX;
     [cb endCommandBuffer];
