@@ -33,22 +33,27 @@ fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], texture
     bool hasBarY = (b0.y > 0.002) || (b1.y < 0.998);
     bool hasBarX = (b0.x > 0.002) || (b1.x < 0.998);
     if (hasBarY && !hasBarX) {
-        float2 srcUV = clamp(guv * c.rect.zw + c.rect.xy, c.edge.xy, c.edge.zw);
-        float3 edgeOrGame = t.sample(s, srcUV).rgb;
-        if (in.uv.y >= b0.y && in.uv.y <= b1.y)
-            return float4(edgeOrGame, 1.0);
+        bool top = in.uv.y < (b0.y + b1.y) * 0.5;
+        float edgeY = top ? 0.0 : 1.0;
+        if (in.uv.y >= b0.y && in.uv.y <= b1.y) {
+            float2 srcUV = clamp(guv * c.rect.zw + c.rect.xy, c.edge.xy, c.edge.zw);
+            float3 game = t.sample(s, srcUV).rgb;
+            float innerDistance = top ? guv.y : 1.0 - guv.y;
+            constexpr float featherWidth = 0.014;
+            if (innerDistance >= featherWidth)
+                return float4(game, 1.0);
+            // Use the same filtered edge color on both sides of the join.
+            float3 edge = nearTex.sample(s, float2(guv.x, edgeY)).rgb;
+            return float4(mix(edge, game, smoothstep(0.0, featherWidth, innerDistance)), 1.0);
+        }
 
-        // Match the main image at the seam, then soften only outside the viewport.
-        bool top = in.uv.y < b0.y;
         float distance = top ? b0.y - in.uv.y : in.uv.y - b1.y;
         float barHeight = top ? b0.y : 1.0 - b1.y;
         float p = saturate(distance / max(barHeight, 1e-5));
         float offset = (top ? 1.0 : -1.0) * distance / bsz.y;
-        float edgeY = top ? 0.0 : 1.0;
         float3 nearCol = nearTex.sample(s, float2(guv.x, saturate(edgeY + 0.30 * offset))).rgb;
         float3 farCol = ambTex.sample(s, float2(guv.x, saturate(edgeY + 0.12 * offset))).rgb;
-        float3 soft = mix(nearCol, farCol, smoothstep(0.22, 0.91, p));
-        float3 color = mix(edgeOrGame, soft, smoothstep(0.0, 0.36, p));
+        float3 color = mix(nearCol, farCol, smoothstep(0.22, 0.91, p));
         float x = 2.0 * guv.x - 1.0;
         float shade = 1.0 - 0.72 * smoothstep(0.10, 1.0, p);
         float corner = 1.0 - 0.18 * x * x * smoothstep(0.15, 1.0, p);

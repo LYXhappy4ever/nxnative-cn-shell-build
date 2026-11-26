@@ -444,6 +444,22 @@ static NSString *program_env(void) {
     }
     NSString *romfs = romfs_locate(prog);
     if (!romfs) return nil;
+    NSString *externalMSL = [NSBundle.mainBundle objectForInfoDictionaryKey:@"DMExternalMSLImage"];
+    if (!prog && [externalMSL isKindOfClass:NSString.class]) {
+        NSString *externalDir = [doc stringByAppendingPathComponent:@"msl"];
+        NSString *image = [externalDir stringByAppendingPathComponent:externalMSL.lastPathComponent];
+        NSDictionary *file = [fm attributesOfItemAtPath:image error:nil];
+        NSNumber *expectedSize = [NSBundle.mainBundle objectForInfoDictionaryKey:@"DMExternalMSLSize"];
+        if (![externalMSL isEqualToString:externalMSL.lastPathComponent] ||
+            ![externalMSL hasPrefix:@"b-"] || ![externalMSL hasSuffix:@".img"] ||
+            ![file.fileType isEqualToString:NSFileTypeRegular] || file.fileSize == 0 ||
+            ![expectedSize isKindOfClass:NSNumber.class] || file.fileSize != expectedSize.unsignedLongLongValue) {
+            snprintf(g_boot_message, sizeof g_boot_message, "缺少完整的游戏着色器文件。请将 %s 拷贝到游戏的 Documents/msl 文件夹。", externalMSL.UTF8String);
+            fprintf(stderr, "[RED] boot: %s\n", g_boot_message);
+            return nil;
+        }
+        msl = externalDir;
+    }
     fprintf(stderr, "boot: game files %s\n", romfs.fileSystemRepresentation);
     setenv("DM_ROMFS", romfs.fileSystemRepresentation, 0);
     setenv("DM_NVN_SHMAP", [dmdir stringByAppendingPathComponent:@"shader_map.tsv"].fileSystemRepresentation, 0);
