@@ -31,7 +31,8 @@ static inline CGRect dm_aspect_fill(CGRect b, CGFloat aspect) {
     return CGRectMake(CGRectGetMidX(b) - w / 2, CGRectGetMidY(b) - h / 2, w, h);
 }
 
-static inline BOOL dm_picture_fill(const char *_Nullable value) { return value && !strcmp(value, "fill"); }   // DM_PICTURE_FIT: fit (default) or fill
+static inline BOOL dm_picture_fill(const char *_Nullable value) { return value && !strcmp(value, "fill"); }   // DM_PICTURE_FIT: fit (default), ambient, or fill
+static inline BOOL dm_picture_ambient(const char *_Nullable value) { return value && !strcmp(value, "ambient"); }
 
 static inline CGRect dm_horizontal_division(CGRect b, CGRect division) {
     if (CGRectIsNull(division) || division.size.width <= division.size.height) return CGRectNull;
@@ -69,6 +70,11 @@ static inline DmLayout dm_layout_pad_only(CGRect b) { return (DmLayout){ CGRectZ
 // area above the controls, where cropping a small picture would cost more than the bars.
 static inline DmLayout dm_layout_picture(DmLayout l, CGRect b, BOOL fill, CGFloat aspect) {
     if (fill && !l.separated && !CGRectIsEmpty(b)) l.game = dm_aspect_fill(b, aspect);
+    return l;
+}
+static inline DmLayout dm_layout_picture_mode(DmLayout l, CGRect b, BOOL fill, BOOL ambient, CGFloat aspect) {
+    if (fill && !l.separated && !CGRectIsEmpty(b)) l.game = dm_aspect_fill(b, aspect);
+    else if (ambient && !l.separated && !CGRectIsEmpty(b)) l.game = b;
     return l;
 }
 

@@ -182,6 +182,7 @@ enum DMChineseUI {
         "Picture": "画面显示范围",
         "Fill crops the game's 16:9 picture to cover the screen. Health bars, subtitles or maps near the edges can be cut off. A full-screen picture without cropping needs a patch for each game.": "铺满屏幕会裁剪 16:9 画面边缘，可能遮挡血条、字幕或地图；想完整显示请选“适应屏幕”。",
         "Fit": "适应屏幕（完整画面）",
+        "Ambient": "流光氛围灯（光影填补黑边）",
         "Fill": "铺满屏幕（可能裁剪）",
         "Frame-rate counter": "显示帧率",
         "Touch feedback": "触摸震动反馈",

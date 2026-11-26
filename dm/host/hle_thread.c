@@ -1013,8 +1013,11 @@ void dm_guest_sleep_ns(int64_t ns) {
         while (guest_ns() < deadline) { struct timespec ts = {0, 1000000}; nanosleep(&ts, 0); }
         return;
     }
+    extern int dm_get_game_speed(void);
+    int pct = dm_get_game_speed();
+    int64_t real_ns = pct > 100 ? (ns * 100 / pct) : ns;
     thr_t *me = pthread_getspecific(g_keythr); if (me) me->sleeping = 1;
-    sleep_precise(now_ns() + (uint64_t)ns);
+    sleep_precise(now_ns() + (uint64_t)real_ns);
     if (me) me->sleeping = 0;
 }
 // A host hook's bounded wait on a host condition variable (m held), a sleep to a garbage collector's pause like dm_guest_sleep_ns; the caller checks its condition and the clock

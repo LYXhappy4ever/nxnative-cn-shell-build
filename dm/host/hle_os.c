@@ -52,14 +52,52 @@ static int detclock_cfg(void) {
     static int c = -1; if (c < 0) { const char *e = getenv("DM_DETCLOCK"); g_gdet_step = e ? strtoull(e, 0, 0) : 0; c = g_gdet_step > 0; }
     return c;
 }
-static uint64_t wall_guest_ns(void) { return atomic_load(&g_gfz) ? atomic_load(&g_gfrozen) : now_ns() - atomic_load(&g_glag); }
+static pthread_mutex_t g_spd_mu = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t g_spd_host_base, g_spd_guest_base;
+static _Atomic int g_speed_pct = -1;
+static void speed_init_unlocked(uint64_t t) {
+    if (atomic_load_explicit(&g_speed_pct, memory_order_relaxed) < 0) {
+        const char *e = getenv("DM_GAME_SPEED");
+        int p = e ? atoi(e) : 100;
+        if (p < 50 || p > 400) p = 100;
+        g_spd_host_base = t; g_spd_guest_base = t;
+        atomic_store_explicit(&g_speed_pct, p, memory_order_release);
+    }
+}
+static uint64_t scaled_host_ns(uint64_t t) {
+    pthread_mutex_lock(&g_spd_mu);
+    speed_init_unlocked(t);
+    int p = atomic_load_explicit(&g_speed_pct, memory_order_relaxed);
+    uint64_t out = (p == 100 && g_spd_guest_base == g_spd_host_base)
+        ? t
+        : g_spd_guest_base + (uint64_t)(((__uint128_t)(t >= g_spd_host_base ? t - g_spd_host_base : 0) * (uint64_t)p) / 100);
+    pthread_mutex_unlock(&g_spd_mu);
+    return out;
+}
+void dm_set_game_speed(int pct) {
+    if (pct < 50 || pct > 400) pct = 100;
+    uint64_t t = now_ns();
+    pthread_mutex_lock(&g_spd_mu);
+    speed_init_unlocked(t);
+    int cur = atomic_load_explicit(&g_speed_pct, memory_order_relaxed);
+    g_spd_guest_base += (uint64_t)(((__uint128_t)(t >= g_spd_host_base ? t - g_spd_host_base : 0) * (uint64_t)cur) / 100);
+    g_spd_host_base = t;
+    atomic_store_explicit(&g_speed_pct, pct, memory_order_release);
+    pthread_mutex_unlock(&g_spd_mu);
+}
+int dm_get_game_speed(void) {
+    int p = atomic_load_explicit(&g_speed_pct, memory_order_acquire);
+    if (p < 0) { scaled_host_ns(now_ns()); p = atomic_load_explicit(&g_speed_pct, memory_order_acquire); }
+    return p;
+}
+static uint64_t wall_guest_ns(void) { return atomic_load(&g_gfz) ? atomic_load(&g_gfrozen) : scaled_host_ns(now_ns()) - atomic_load(&g_glag); }
 uint64_t guest_ns(void) { return atomic_load(&g_gdet_on) ? atomic_load(&g_gdet) : wall_guest_ns(); }
 int guest_clock_pinned(void) { return atomic_load(&g_gdet_on) || atomic_load(&g_gfz); }
 uint64_t guest_ns_at_host_time(uint64_t host_ns) {
     if (atomic_load(&g_gdet_on)) return atomic_load(&g_gdet);
     if (atomic_load(&g_gfz)) return atomic_load(&g_gfrozen);
-    uint64_t lag = atomic_load(&g_glag);
-    return host_ns >= lag ? host_ns - lag : 0;
+    uint64_t sh = scaled_host_ns(host_ns), lag = atomic_load(&g_glag);
+    return sh >= lag ? sh - lag : 0;
 }
 // The system counter on that clock: 19.2 MHz on the Switch, 31.25 MHz (32 ns a tick) on the Switch 2, whose SDK reads cntpct_el0 and converts with that rate
 // (nn::os::GetSystemTickFrequency answers 0x1dcd650, sdk 20.5.19 Ounce). Read at 19.2 MHz, every tick span a Switch 2 game measured came out 1.63 times too short, and the
@@ -77,8 +115,8 @@ void dm_guest_frame_tick(void) {
     if (!atomic_load(&g_gfz)) { atomic_fetch_add(&g_gdet, g_gdet_step); dm_guest_clock_advanced(); }
 }
 static void guest_clock_freeze_apply(int on) {
-    if (on && !atomic_load(&g_gfz)) { atomic_store(&g_gfrozen, now_ns() - atomic_load(&g_glag)); atomic_store(&g_gfz, 1); }
-    else if (!on && atomic_load(&g_gfz)) { atomic_store(&g_glag, now_ns() - atomic_load(&g_gfrozen)); atomic_store(&g_gfz, 0); }
+    if (on && !atomic_load(&g_gfz)) { atomic_store(&g_gfrozen, scaled_host_ns(now_ns()) - atomic_load(&g_glag)); atomic_store(&g_gfz, 1); }
+    else if (!on && atomic_load(&g_gfz)) { atomic_store(&g_glag, scaled_host_ns(now_ns()) - atomic_load(&g_gfrozen)); atomic_store(&g_gfz, 0); }
 }
 // Freezing has several unrelated reasons (0 freeze tick for testing / loading screen, 1 App in background, 2 system keyboard up): freeze if any holds, release only when all are lifted --
 // otherwise "switch to background and back while the keyboard is up" would be released early by the unfreeze on returning to foreground

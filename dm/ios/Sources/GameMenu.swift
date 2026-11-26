@@ -168,9 +168,67 @@ private final class GameMenuState: ObservableObject {
 
         switch currentTab {
         case .display:
+            // 黑边光影填充（适应 / 流光氛围灯 / 铺满屏幕）
+            let fitModes: [(String, String)] = [
+                ("ambient", "流光氛围灯（光影填补黑边）"),
+                ("fit", "适应屏幕（黑边）"),
+                ("fill", "铺满屏幕（裁剪边缘）"),
+            ]
+            let curFit = ProcessInfo.processInfo.environment["DM_PICTURE_FIT"] ?? "fit"
+            let curFitLabel = fitModes.first { $0.0 == curFit }?.1 ?? "适应屏幕（黑边）"
+            list.append(MenuItem(
+                id: "disp.picture_fit",
+                icon: "sparkles.rectangle.stack",
+                section: "黑边与倍速增强",
+                title: "黑边填充效果",
+                valueText: curFitLabel,
+                subtitle: "流光氛围灯会把画面边缘光影柔和投射到上下黑边中",
+                badgeText: "实时",
+                disabled: false
+            ) { dir in
+                let curPos = fitModes.firstIndex { $0.0 == curFit } ?? 1
+                let step = dir < 0 ? -1 : 1
+                let next = fitModes[(curPos + step + fitModes.count) % fitModes.count]
+                setenv("DM_PICTURE_FIT", next.0, 1)
+                _ = dm_setting_live("DM_PICTURE_FIT", next.0)
+                if let m = gameMenuModel, let s = m.settings.first(where: { $0.env == "DM_PICTURE_FIT" }) {
+                    m.choose(s, next.0)
+                }
+                self.statusNote = "已切换黑边效果为：\(next.1)"
+                self.rebuild()
+            })
+
+            // 游戏倍速（1.0x / 1.5x / 2.0x / 3.0x）
+            let speedModes: [(Int, String)] = [
+                (100, "1.0x（正常）"),
+                (150, "1.5x（轻快）"),
+                (200, "2.0x（加速）"),
+                (300, "3.0x（飞速）"),
+            ]
+            let curSpd = Int(dm_get_game_speed())
+            let curSpdLabel = speedModes.first { $0.0 == curSpd }?.1 ?? "\(Double(curSpd) / 100.0)x"
+            list.append(MenuItem(
+                id: "disp.game_speed",
+                icon: "forward.fill",
+                section: "黑边与倍速增强",
+                title: "游戏倍速",
+                valueText: curSpdLabel,
+                subtitle: "加快过场与文字过渡节奏（随时可切回 1.0x）",
+                badgeText: "实时",
+                disabled: false
+            ) { dir in
+                let curPos = speedModes.firstIndex { $0.0 == curSpd } ?? 0
+                let step = dir < 0 ? -1 : 1
+                let next = speedModes[(curPos + step + speedModes.count) % speedModes.count]
+                setenv("DM_GAME_SPEED", "\(next.0)", 1)
+                _ = dm_setting_live("DM_GAME_SPEED", "\(next.0)")
+                self.statusNote = "已切换游戏倍速为：\(next.1)"
+                self.rebuild()
+            })
+
             if let m = gameMenuModel {
                 for section in m.sections where section == "Game" || section == "Performance" {
-                    for s in m.rows(in: section) where (s.kind == "choice" || s.kind == "toggle" || s.kind == "range") && (dm_setting_live(s.env, nil) || s.env == "DM_RENDER_SCALE") {
+                    for s in m.rows(in: section) where s.env != "DM_PICTURE_FIT" && (s.kind == "choice" || s.kind == "toggle" || s.kind == "range") && (dm_setting_live(s.env, nil) || s.env == "DM_RENDER_SCALE") {
                         let secTitle = section == "Performance" ? "性能监控" : "显示与性能调节"
                         appendSettingItem(s, model: m, sectionOverride: secTitle, into: &list)
                     }
