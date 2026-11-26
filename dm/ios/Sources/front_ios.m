@@ -315,6 +315,13 @@ bool dm_setting_live(const char *env, const char *value) {
         }
         return true;
     }
+    if (!strcmp(env, "DM_DOCKED_TOUCH")) {
+        if (value) {
+            dm_set_docked_touch(atoi(value) != 0);
+            LOG("front end: docked touch %s (in-game menu)", value);
+        }
+        return true;
+    }
     if (!strcmp(env, "DM_OPMODE")) {
         if (!value) return true;
         int m = atoi(value) ? 1 : 0;

@@ -1658,10 +1658,25 @@ HLE_FORCE("_ZN2nn3hid28ShowControllerFirmwareUpdateERKNS0_27ControllerFirmwareUp
 // the Mac's mouse, the iPhone touches no gamepad control takes, DM_KEYS taps) in handheld mode, as on the Switch, whose screen is out of reach when docked: a game may read touches
 // without checking the mode, so in console mode the state has no touch points. Super Mario Galaxy's pointer is the touch screen in handheld mode. hle_touch.c numbers
 // the states of both modes from its one count
+static _Atomic int g_docked_touch = -1;
+int dm_get_docked_touch(void) {
+    int v = atomic_load_explicit(&g_docked_touch, memory_order_acquire);
+    if (v < 0) {
+        const char *e = getenv("DM_DOCKED_TOUCH");
+        v = (e && *e) ? (atoi(e) != 0) : 1;   // enabled by default so docked 1080p also accepts touch
+        atomic_store_explicit(&g_docked_touch, v, memory_order_release);
+    }
+    return v;
+}
+void dm_set_docked_touch(bool on) {
+    atomic_store_explicit(&g_docked_touch, on ? 1 : 0, memory_order_release);
+}
+static int touch_allowed_now(void) { return dm_opmode() == 0 || dm_get_docked_touch(); }
+
 int touch_fill_n(void *out, int max, uint64_t now_ns, int points);
 static void touch_read(void *s, int n) {
     keys_sync();   // DM_KEYS frame steps due in this frame (their touches), before the read
-    touch_fill_n(s, n, now_ns(), dm_opmode() == 0);
+    touch_fill_n(s, n, now_ns(), touch_allowed_now());
 }
 HLE_FORCE("_ZN2nn3hid21InitializeTouchScreenEv", "connect to the hid touch screen; the host takes touch points from the front end", void, h_hid_InitTouch, void) {}
 // SDK 18 overload with two ints (Super Mario Galaxy); the SDK's own one opens the hid service and aborts in sm::Initialize
@@ -1677,7 +1692,7 @@ HLE_FORCE("_ZN2nn3hid17InitializeGestureEv", "connect to the hid gesture recogni
 HLE_FORCE("_ZN2nn3hid17InitializeGestureEii", "connect to the hid gesture recognizer (two-argument version); the host recognizes gestures from the touch points", void, h_hid_InitGesture2, int a, int b) { (void)a; (void)b; }
 HLE_FORCE("_ZN2nn3hid16GetGestureStatesEPNS0_12GestureStateEi", "gesture states, newest first (handheld mode: recognized from the touch points; console mode: none)", int, h_hid_Gestures, void *out, int n) {
     keys_sync();
-    return dm_opmode() == 0 ? gesture_fill(out, n, now_ns()) : 0;
+    return touch_allowed_now() ? gesture_fill(out, n, now_ns()) : 0;
 }
 
 // Six-axis details: the current state, at rest unless shaking, fusion off

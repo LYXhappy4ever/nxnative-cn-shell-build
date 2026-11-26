@@ -248,6 +248,25 @@ private final class GameMenuState: ObservableObject {
             }
 
         case .controls:
+            // 主机模式允许触屏（1080p 高清下也可直接点屏幕，随时可关）
+            let dockedTouchOn = dm_get_docked_touch()
+            list.append(MenuItem(
+                id: "pad.docked_touch",
+                icon: "hand.point.up.left.fill",
+                section: "触控与虚拟按键",
+                title: "主机模式允许触屏",
+                valueText: dockedTouchOn ? "已开启" : "已关闭",
+                subtitle: "开启后在 1080p 主机模式下也能一边用手柄一边直接点屏幕",
+                badgeText: "实时",
+                disabled: false
+            ) { _ in
+                let next = !dockedTouchOn
+                setenv("DM_DOCKED_TOUCH", next ? "1" : "0", 1)
+                _ = dm_setting_live("DM_DOCKED_TOUCH", next ? "1" : "0")
+                self.statusNote = "已\(next ? "开启" : "关闭")主机模式触屏"
+                self.rebuild()
+            })
+
             // 虚拟手柄布局
             let layoutNames = ["2D（简洁）", "3D（完整）", "触屏"]
             let offeredLayouts = (0..<3).filter { dm_pad_layout_offered(Int32($0)) }

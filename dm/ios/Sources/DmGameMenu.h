@@ -20,6 +20,8 @@ void dm_gamepad_touch_feedback(bool on);   // DM_TOUCH_HAPTICS
 bool dm_setting_live(const char *env, const char *value);   // front_ios.m: value NULL asks whether the running game takes env at once; otherwise applies it
 void dm_set_game_speed(int pct);
 int dm_get_game_speed(void);
+bool dm_get_docked_touch(void);
+void dm_set_docked_touch(bool on);
 
 // Physical controller switching & assignment (DmGamepad.m)
 bool dm_pad_get_merge(void);

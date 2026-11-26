@@ -5,7 +5,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-typedef struct { CGRect game, controls; BOOL separated, topSafeOnly; } DmLayout;
+typedef struct { CGRect game, controls, picture; BOOL separated, topSafeOnly; } DmLayout;
 
 static inline UIEdgeInsets dm_game_safe_insets(CGRect bounds, UIEdgeInsets insets, BOOL duo) {
     return duo && bounds.size.height > bounds.size.width ? UIEdgeInsetsMake(insets.top, 0, 0, 0) : insets;
@@ -47,7 +47,7 @@ static inline CGRect dm_horizontal_division(CGRect b, CGRect division) {
 }
 
 static inline DmLayout dm_layout(CGRect b, UIEdgeInsets insets, BOOL partiallyOpen, CGRect division, CGFloat aspect) {
-    DmLayout l = { dm_aspect_fit(b, aspect), b, NO, NO };
+    DmLayout l = { dm_aspect_fit(b, aspect), b, dm_aspect_fit(b, aspect), NO, NO };
     if (CGRectIsEmpty(b)) return l;
     division = dm_horizontal_division(b, division);
     BOOL portrait = b.size.height > b.size.width;
@@ -59,22 +59,22 @@ static inline DmLayout dm_layout(CGRect b, UIEdgeInsets insets, BOOL partiallyOp
     CGRect lower = CGRectMake(CGRectGetMinX(b), CGRectGetMaxY(division), b.size.width,
                              CGRectGetMaxY(b) - CGRectGetMaxY(division));
     if (upper.size.height <= 0 || CGRectGetMaxY(safe) <= CGRectGetMinY(lower)) return l;
-    l.game = dm_aspect_fit(upper, aspect); l.controls = lower; l.separated = YES;
+    l.game = dm_aspect_fit(upper, aspect); l.picture = l.game; l.controls = lower; l.separated = YES;
     return l;
 }
 
 // The picture is on a TV (front_ios.m DmTVSceneDelegate): the controls take the whole view and no touch goes to the game's touch screen (the game is docked there).
-static inline DmLayout dm_layout_pad_only(CGRect b) { return (DmLayout){ CGRectZero, b, NO, NO }; }
+static inline DmLayout dm_layout_pad_only(CGRect b) { return (DmLayout){ CGRectZero, b, CGRectZero, NO, NO }; }
 
 // Fill covers the full view only in the overlay layout (landscape). A portrait or tabletop split keeps the picture fitted in its
 // area above the controls, where cropping a small picture would cost more than the bars.
 static inline DmLayout dm_layout_picture(DmLayout l, CGRect b, BOOL fill, CGFloat aspect) {
-    if (fill && !l.separated && !CGRectIsEmpty(b)) l.game = dm_aspect_fill(b, aspect);
+    if (fill && !l.separated && !CGRectIsEmpty(b)) { l.game = dm_aspect_fill(b, aspect); l.picture = l.game; }
     return l;
 }
 static inline DmLayout dm_layout_picture_mode(DmLayout l, CGRect b, BOOL fill, BOOL ambient, CGFloat aspect) {
-    if (fill && !l.separated && !CGRectIsEmpty(b)) l.game = dm_aspect_fill(b, aspect);
-    else if (ambient && !l.separated && !CGRectIsEmpty(b)) l.game = b;
+    if (fill && !l.separated && !CGRectIsEmpty(b)) { l.game = dm_aspect_fill(b, aspect); l.picture = l.game; }
+    else if (ambient && !l.separated && !CGRectIsEmpty(b)) { l.game = b; l.picture = dm_aspect_fit(b, aspect); }
     return l;
 }
 

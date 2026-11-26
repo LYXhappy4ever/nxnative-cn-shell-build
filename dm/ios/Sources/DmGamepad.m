@@ -164,6 +164,10 @@ static void pads_start(void);   // Physical controllers, below
     BOOL _padOff;                                  // a physical controller is connected: every touch goes to the game
     DmLayout _layout;
     UITouch *_game[16];                            // touches on the game's touch screen by finger slot
+    CGPoint _gamePt[16];                           // last view-space position for each slot
+    NSTimeInterval _gameBeganAt[16];               // touch down timestamp for minimum tap-hold
+    BOOL _gamePendingEnd[16];                      // waiting for 85ms hold before releasing
+    NSUInteger _gameSlotSeq[16];                   // generation counter per slot
     UITouch *_gearRevealTap; CGPoint _gearRevealStart; NSTimeInterval _gearRevealBegan; NSUInteger _gearEpoch;
 }
 
@@ -439,18 +443,28 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 }
 // Touches no control takes go to the game's touch screen, normalized on front_ios.m's actual 16:9 viewport (including portrait and tabletop splits, and the cropped Fill picture): Super Mario Galaxy's pointer in handheld mode (profile op_mode). The host reports them only in handheld mode, as on the Switch (hle_hid.c touch_read)
 - (void)pushGame {
-    CGRect b = _layout.game;
+    CGRect b = !CGRectIsEmpty(_layout.picture) ? _layout.picture : _layout.game;
     if (b.size.width <= 0 || b.size.height <= 0) { dm_touch_set(NULL, 0); return; }
     dm_touch t[16]; int n = 0;
-    for (int i = 0; i < 16; i++) if (_game[i]) {
-        CGPoint p = dm_game_touch_point(b, [_game[i] locationInView:self]);   // with Fill the game rectangle is larger than the view (DmLayout.h)
+    for (int i = 0; i < 16; i++) if (_game[i] || _gamePendingEnd[i]) {
+        CGPoint pt = _game[i] ? [_game[i] locationInView:self] : _gamePt[i];
+        CGPoint p = dm_game_touch_point(b, pt);   // aligned to actual 16:9 game picture even under Ambilight
         t[n++] = (dm_touch){(uint32_t)i, (float)p.x, (float)p.y};
     }
     dm_touch_set(t, n);
 }
 - (BOOL)gameBegin:(UITouch *)t {
-    if (CGRectIsEmpty(_layout.game) || (_layout.separated && !CGRectContainsPoint(_layout.game, [t locationInView:self]))) return NO;
-    for (int i = 0; i < 16; i++) if (!_game[i]) { _game[i] = t; [_owner setObject:@(C_GAME | (uint64_t)i << 8) forKey:t]; return YES; }
+    CGRect touchBox = !CGRectIsEmpty(_layout.picture) ? _layout.picture : _layout.game;
+    if (CGRectIsEmpty(touchBox) || (_layout.separated && !CGRectContainsPoint(touchBox, [t locationInView:self]))) return NO;
+    for (int i = 0; i < 16; i++) if (!_game[i] && !_gamePendingEnd[i]) {
+        _game[i] = t;
+        _gamePt[i] = [t locationInView:self];
+        _gameBeganAt[i] = t.timestamp;
+        _gamePendingEnd[i] = NO;
+        _gameSlotSeq[i]++;
+        [_owner setObject:@(C_GAME | (uint64_t)i << 8) forKey:t];
+        return YES;
+    }
     return NO;
 }
 // While an offline HTML page is shown over the picture (web_apple.m front_web_touch), a touch no control would take goes to the page instead of the game's touch screen:
@@ -504,7 +518,7 @@ int front_web_touch(void);
         else if (c == C_STICK) { _stickNow[v >> 8] = p;
             if ((v >> 8) == 1) { CGFloat d = dist(p, _rCentre), R = [self stickR:1];   // the right stick's centre follows a finger past its radius, so turning back responds at once
                 if (d > R) _rCentre = CGPointMake(p.x - (p.x - _rCentre.x) * R / d, p.y - (p.y - _rCentre.y) * R / d); } }
-        else if (c == C_GAME) game = YES;
+        else if (c == C_GAME && (v >> 8) < 16) { _gamePt[v >> 8] = p; game = YES; }
     }
     if (game) [self pushGame];
     [self recompute];
@@ -520,7 +534,27 @@ int front_web_touch(void);
             continue;
         }
         uint64_t v = [_owner objectForKey:t].unsignedLongLongValue;
-        if ((v & 0xff) == C_GAME && (v >> 8) < 16) { _game[v >> 8] = nil; game = YES; }
+        if ((v & 0xff) == C_GAME && (v >> 8) < 16) {
+            int idx = (int)(v >> 8);
+            _gamePt[idx] = [t locationInView:self];
+            _game[idx] = nil;
+            NSTimeInterval held = ended ? (t.timestamp - _gameBeganAt[idx]) : 1.0;
+            if (ended && held < 0.085) {
+                _gamePendingEnd[idx] = YES;
+                NSUInteger seq = _gameSlotSeq[idx];
+                NSTimeInterval rem = 0.085 - MAX(0.0, held);
+                __weak DmGamepad *weakSelf = self;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(rem * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    DmGamepad *strongSelf = weakSelf;
+                    if (!strongSelf || strongSelf->_gameSlotSeq[idx] != seq) return;
+                    strongSelf->_gamePendingEnd[idx] = NO;
+                    [strongSelf pushGame];
+                });
+            } else {
+                _gamePendingEnd[idx] = NO;
+            }
+            game = YES;
+        }
         [_owner removeObjectForKey:t]; [_faceOf removeObjectForKey:t]; for (int i = 0; i < 2; i++) if (t == _stick[i]) _stick[i] = nil;
     }
     if (game) [self pushGame];
