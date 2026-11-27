@@ -65,7 +65,7 @@ int touch_fill_n_res(void *out, int max, uint64_t now_ns, int points, int pw, in
         if (!g_f[id].reported) { attr |= 1; g_f[id].reported = 1; }          // Start (reported for the first time this time)
         else if (g_f[id].st == F_LIFTED) attr |= 2;                         // End (Start already reported, already lifted)
         uint8_t *s = o + 0x10 + 0x28 * k++;
-        int32_t x = clampi(g_f[id].x, pw - 1), y = clampi(g_f[id].y, ph - 1), d = 30, zero = 0, fid = id;
+        int32_t x = clampi(g_f[id].x, pw - 1), y = clampi(g_f[id].y, ph - 1) - (ph == 1080 ? 360 : 0), d = 30, zero = 0, fid = id;
         memcpy(s + 0x00, &dt, 8); memcpy(s + 0x08, &attr, 4); memcpy(s + 0x0c, &fid, 4);
         memcpy(s + 0x10, &x, 4); memcpy(s + 0x14, &y, 4); memcpy(s + 0x18, &d, 4); memcpy(s + 0x1c, &d, 4); memcpy(s + 0x20, &zero, 4);
         if (attr & 2) {                                                      // End has been reported: release; if the same id was pressed again in the meantime, turn it into a new press
