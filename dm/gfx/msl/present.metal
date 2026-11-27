@@ -55,8 +55,8 @@ fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], texture
         float3 farCol = ambTex.sample(s, float2(guv.x, saturate(edgeY + 0.12 * offset))).rgb;
         float3 color = mix(nearCol, farCol, smoothstep(0.22, 0.91, p));
         float x = 2.0 * guv.x - 1.0;
-        float shade = 1.0 - 0.72 * smoothstep(0.10, 1.0, p);
-        float corner = 1.0 - 0.18 * x * x * smoothstep(0.15, 1.0, p);
+        float shade = 1.0 - 0.12 * smoothstep(0.10, 1.0, p);
+        float corner = 1.0 - 0.05 * x * x * smoothstep(0.15, 1.0, p);
         return float4(color * shade * corner, 1.0);
     }
 

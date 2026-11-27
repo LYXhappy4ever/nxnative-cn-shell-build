@@ -51,8 +51,10 @@ static int32_t clampi(float v, int hi) { int32_t r = (int32_t)(v * (float)(hi + 
 // Fingers beyond max are left for a later read (their Start / End is not used up). points 0 is a read in console mode, when the screen is out of reach: the state
 // has no touch points and the fingers are left as they are, but it takes the next sample number, so the numbers rise from read to read whatever the mode. Unity's
 // touch reader (Aokana main+0xd2bde0) takes a state only if its number is above the last one it took, empty states included
-int touch_fill_n(void *out, int max, uint64_t now_ns, int points) {
+int touch_fill_n_res(void *out, int max, uint64_t now_ns, int points, int pw, int ph) {
     if (max < 1) max = 1; else if (max > 16) max = 16;
+    if (pw < 1) pw = 1280;
+    if (ph < 1) ph = 720;
     uint8_t *o = out; memset(o, 0, 0x10 + 0x28 * (size_t)max);
     pthread_mutex_lock(&g_tl);
     int64_t samp = ++g_tsamp; int64_t dt = g_tlast_ns ? (int64_t)(now_ns - g_tlast_ns) : 0; g_tlast_ns = now_ns;
@@ -63,7 +65,7 @@ int touch_fill_n(void *out, int max, uint64_t now_ns, int points) {
         if (!g_f[id].reported) { attr |= 1; g_f[id].reported = 1; }          // Start (reported for the first time this time)
         else if (g_f[id].st == F_LIFTED) attr |= 2;                         // End (Start already reported, already lifted)
         uint8_t *s = o + 0x10 + 0x28 * k++;
-        int32_t x = clampi(g_f[id].x, 1279), y = clampi(g_f[id].y, 719), d = 30, zero = 0, fid = id;
+        int32_t x = clampi(g_f[id].x, pw - 1), y = clampi(g_f[id].y, ph - 1), d = 30, zero = 0, fid = id;
         memcpy(s + 0x00, &dt, 8); memcpy(s + 0x08, &attr, 4); memcpy(s + 0x0c, &fid, 4);
         memcpy(s + 0x10, &x, 4); memcpy(s + 0x14, &y, 4); memcpy(s + 0x18, &d, 4); memcpy(s + 0x1c, &d, 4); memcpy(s + 0x20, &zero, 4);
         if (attr & 2) {                                                      // End has been reported: release; if the same id was pressed again in the meantime, turn it into a new press
@@ -83,6 +85,7 @@ int touch_fill_n(void *out, int max, uint64_t now_ns, int points) {
     }
     return k;
 }
+int touch_fill_n(void *out, int max, uint64_t now_ns, int points) { return touch_fill_n_res(out, max, now_ns, points, 1280, 720); }
 int touch_fill(void *out, uint64_t now_ns) { return touch_fill_n(out, 16, now_ns, 1); }   // TouchScreenState<16>, 0x290 bytes
 
 // Gestures: nn::hid::GetGestureStates hands the game the newest entries of a gesture recognizer's history (newest first, 16 kept), which Horizon's hid builds from the touch screen.

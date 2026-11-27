@@ -1673,10 +1673,13 @@ void dm_set_docked_touch(bool on) {
 }
 static int touch_allowed_now(void) { return dm_opmode() == 0 || dm_get_docked_touch(); }
 
-int touch_fill_n(void *out, int max, uint64_t now_ns, int points);
+int touch_fill_n_res(void *out, int max, uint64_t now_ns, int points, int pw, int ph);
 static void touch_read(void *s, int n) {
     keys_sync();   // DM_KEYS frame steps due in this frame (their touches), before the read
-    touch_fill_n(s, n, now_ns(), touch_allowed_now());
+    static int touch_1080p = -1;
+    if (touch_1080p < 0) { const char *e = getenv("DM_TOUCH_1080P"); touch_1080p = (e && atoi(e) != 0) ? 1 : 0; }
+    int full_hd = touch_1080p && dm_opmode() != 0;
+    touch_fill_n_res(s, n, now_ns(), touch_allowed_now(), full_hd ? 1920 : 1280, full_hd ? 1080 : 720);
 }
 HLE_FORCE("_ZN2nn3hid21InitializeTouchScreenEv", "connect to the hid touch screen; the host takes touch points from the front end", void, h_hid_InitTouch, void) {}
 // SDK 18 overload with two ints (Super Mario Galaxy); the SDK's own one opens the hid service and aborts in sm::Initialize
